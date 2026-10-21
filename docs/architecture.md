@@ -9,7 +9,7 @@
 
 ## Distribuição
 
-O bootstrap da branch main aponta para uma tag de versão explícita (`v0.1.0`). Ele baixa uma lista fixa de quatro arquivos e o manifesto SHA256SUMS. O manifesto não fornece uma assinatura independente: a origem continua sendo o publicador no GitHub por HTTPS. Uma falha de download ou hash interrompe a promoção e mantém a instalação anterior.
+O bootstrap da branch main aponta para uma tag de versão explícita (`v0.1.1`). Ele baixa uma lista fixa de quatro arquivos e o manifesto SHA256SUMS. O manifesto não fornece uma assinatura independente: a origem continua sendo o publicador no GitHub por HTTPS. Uma falha de download ou hash interrompe a promoção e mantém a instalação anterior.
 
 No Windows o comando é um shim CMD em um diretório do PATH do usuário, sem editar perfis PowerShell. No WSL o comando é um symlink em ~/.local/bin. O instalador WSL informa como ajustar o PATH da sessão se necessário; ele não consegue alterar o ambiente do shell pai por um pipe.
 
@@ -21,3 +21,11 @@ No Windows o comando é um shim CMD em um diretório do PATH do usuário, sem ed
 4. O fluxo é idempotente: não faz detach quando Attached, não reinicia serviço/WSL e não executa kill-server. Attach tem retries limitados.
 5. Serial é a identidade preferida. VID/PID e BUSID descobrem candidatos; múltiplos candidatos pedem seleção e o modelo obtido do Android precisa corresponder à preferência.
 6. A hipótese de interferência Windows/WSL/mirrored só aparece como hipótese enquanto PID/listener não identificar o processo.
+
+## Consulta de status
+
+`status` usa a listagem WSL, os objetos tipados do usbipd e uma consulta `host:devices-l` ao smart socket ADB da porta selecionada. Não executa o cliente `adb`, que poderia iniciar um servidor ausente ou substituir um servidor de versão diferente. A consulta ADB só acontece se a distribuição já estiver em execução. A coleta de kernel, processos e logs fica no `doctor`.
+
+O executor recebe `Arguments`, fecha stdin e limita tanto o processo quanto a leitura dos pipes. `WSL_UTF8=1` vale apenas no processo filho; a configuração global do host não é alterada. Comandos Linux usam `--exec` para impedir uma passagem adicional pelo shell padrão.
+
+Os testes de regressão incluem processos Windows reais para argumentos e timeout, os formatos tipados do usbipd, listagens WSL localizadas e a saída JSON do comando completo. A investigação do primeiro problema de uso está em [status-v0.1.1.md](status-v0.1.1.md).

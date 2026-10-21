@@ -13,7 +13,7 @@ Describe 'Standalone PowerShell installer' {
     $downloadRoot = $script:FixtureRoot
     Mock Invoke-WebRequest -MockWith ({
       param($Uri, $OutFile)
-      $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.0/', ''
+      $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.1/', ''
       Copy-Item -LiteralPath (Join-Path $downloadRoot $relative) -Destination $OutFile
     }.GetNewClosure())
   }
@@ -51,7 +51,7 @@ Describe 'Standalone PowerShell installer' {
     $downloadRoot = $script:FixtureRoot
     Mock Invoke-WebRequest -MockWith ({
       param($Uri, $OutFile)
-      $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.0/', ''
+      $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.1/', ''
       Copy-Item -LiteralPath (Join-Path $downloadRoot $relative) -Destination $OutFile
       if ($relative -eq 'src/AndroidConnect.ps1') { Add-Content $OutFile 'corrupted' }
     }.GetNewClosure())

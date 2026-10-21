@@ -80,7 +80,7 @@ Invoke-WebRequest https://raw.githubusercontent.com/cleitonpin/android-connect/m
 & .\install-android-connect.ps1
 ```
 
-Para não alterar o PATH no Windows, execute o arquivo com `-NoPath`. Para fixar uma versão, use `-Version v0.1.0` no PowerShell ou `ANDROID_CONNECT_VERSION=v0.1.0 bash install.sh` no WSL, depois de baixar o instalador. Nenhum perfil de shell é editado. Use `ANDROID_CONNECT_POWERSHELL=pwsh.exe` no WSL ou `$env:ANDROID_CONNECT_POWERSHELL='pwsh.exe'` no Windows para escolher PowerShell 7.
+Para não alterar o PATH no Windows, execute o arquivo com `-NoPath`. Para fixar uma versão, use `-Version v0.1.1` no PowerShell ou `ANDROID_CONNECT_VERSION=v0.1.1 bash install.sh` no WSL, depois de baixar o instalador. Nenhum perfil de shell é editado. Use `ANDROID_CONNECT_POWERSHELL=pwsh.exe` no WSL ou `$env:ANDROID_CONNECT_POWERSHELL='pwsh.exe'` no Windows para escolher PowerShell 7.
 
 Para desenvolver a ferramenta, clone o repositório:
 
@@ -104,6 +104,16 @@ android-connect fix              # aplicar recuperação segura
 android-connect logs             # eventos recentes
 android-connect disconnect       # desconectar somente o dispositivo selecionado
 ```
+
+`status` mostra um resumo em texto e o tempo da consulta. Para JSON, use `android-connect status --json`. Ele não inicia distribuições paradas nem servidores ADB e não coleta logs ou informações de kernel; essa coleta fica no `doctor`. Um USB em `Attached` pode continuar ausente no ADB, e a saída mostra essa diferença.
+
+Para conferir outro servidor já existente, por exemplo o da porta 5038:
+
+```bash
+android-connect status --port 5038
+```
+
+Se instalou a v0.1.0, reexecute o instalador para receber a correção da lentidão, da descoberta USB e da saída de `status`. A [investigação da v0.1.1](docs/status-v0.1.1.md) explica os erros encontrados e os testes de regressão.
 
 Opções: `--device BUSID`, `--serial SERIAL`, `--distro NOME`, `--port N`, `--dry-run`, `--verbose`, `--json`, `--yes`. Use `--output CAMINHO` para exportar o relatório do doctor. `--yes` dispensa confirmações apenas nas operações classificadas como seguras; não autoriza `bind --force`, unbind ou alterações de sistema.
 
@@ -147,6 +157,8 @@ Cada evento de log tem timestamp UTC, severidade, operação, resultado, duraç�
 Os testes de unidade usam Pester 5 para verificar a seleção do dispositivo, os estados USB e a política de portas ADB. Eles também cobrem o uso simultâneo de emulador, erros de autorização, limites de tentativas e cancelamento.
 
 Os testes dos instaladores simulam os downloads e verificam se uma instalação pode ser repetida. Um hash inválido deve interromper a instalação e preservar a versão anterior. No CI Windows, o comando instalado em um caminho com espaços precisa responder a `help`. Os testes dos lançadores usam executáveis falsos para conferir opções e argumentos com espaços e metacaracteres, sem acessar USB.
+
+Os testes de `status` exercitam o executor com processos Windows reais, incluindo argumentos vazios, aspas e timeout. A descoberta e a consulta usam fixtures de objetos usbipd, listagens WSL localizadas e respostas ADB. Um teste executa o comando completo em JSON com uma distribuição inexistente para verificar o contrato de erro.
 
 ```powershell
 Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser

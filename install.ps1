@@ -1,7 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-  [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = 'v0.1.0',
+  [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = 'v0.1.1',
   [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs/AndroidConnect'),
   [switch]$NoPath
 )

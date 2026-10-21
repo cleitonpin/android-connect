@@ -15,6 +15,9 @@ param(
   [Parameter(ValueFromRemainingArguments=$true)][string[]]$Remaining
 )
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+try { [Console]::OutputEncoding = $OutputEncoding } catch { }
 if($Port -lt 0 -or $Port -gt 65535){throw 'Port deve estar entre 1 e 65535.'}
 $script:Started = [Diagnostics.Stopwatch]::StartNew()
 $script:LogPath = Join-Path $env:LOCALAPPDATA 'android-connect/logs/events.jsonl'
@@ -39,11 +42,17 @@ function Read-Config {
   if (Test-Path -LiteralPath $script:ConfigPath) { try { $loaded=Get-Content -Raw -LiteralPath $script:ConfigPath | ConvertFrom-Json; foreach($p in $loaded.PSObject.Properties){$default[$p.Name]=$p.Value} } catch { Write-Event config invalid 'Configuração inválida; usando padrões.' warning } }
   return $default
 }
-function Invoke-Native([string]$File,[string[]]$Args,[int]$TimeoutSec=12) {
-  $psi=[Diagnostics.ProcessStartInfo]::new(); $psi.FileName=$File; $psi.UseShellExecute=$false; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true; $psi.CreateNoWindow=$true
+function Invoke-Native([string]$File,[string[]]$Arguments,[ValidateRange(1,60)][int]$TimeoutSec=12) {
+  $timer=[Diagnostics.Stopwatch]::StartNew()
+  $psi=[Diagnostics.ProcessStartInfo]::new(); $psi.FileName=$File; $psi.UseShellExecute=$false; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true; $psi.RedirectStandardInput=$true; $psi.CreateNoWindow=$true
+  $psi.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
+  $psi.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
+  # Per-child setting: WSL management output otherwise defaults to UTF-16LE.
+  $psi.EnvironmentVariables['WSL_UTF8']='1'
   # ProcessStartInfo.ArgumentList is unavailable on Windows PowerShell 5.1/.NET Framework.
-  $quoted = foreach($arg in $Args) {
+  $quoted = foreach($arg in $Arguments) {
     $value=[string]$arg
+    if($value.Length -eq 0){'""';continue}
     if($value -notmatch '[\s"]'){ $value; continue }
     $builder=[Text.StringBuilder]::new(); [void]$builder.Append('"'); $slashes=0
     foreach($ch in $value.ToCharArray()) {
@@ -55,7 +64,32 @@ function Invoke-Native([string]$File,[string[]]$Args,[int]$TimeoutSec=12) {
   }
   $psi.Arguments=($quoted -join ' ')
   $proc=[Diagnostics.Process]::new(); $proc.StartInfo=$psi;$started=$false
-  try { [void]$proc.Start();$started=$true; $outTask=$proc.StandardOutput.ReadToEndAsync(); $errTask=$proc.StandardError.ReadToEndAsync(); if(-not $proc.WaitForExit($TimeoutSec*1000)){ Stop-NativeChild $proc; return @{ exitCode=124; stdout=''; stderr='timeout' } }; $proc.WaitForExit(); return @{exitCode=$proc.ExitCode;stdout=$outTask.Result;stderr=$errTask.Result} } catch { if($started){Stop-NativeChild $proc};if($_.Exception -is [Management.Automation.PipelineStoppedException]){throw};return @{exitCode=127;stdout='';stderr=$_.Exception.Message} }
+  try {
+    [void]$proc.Start();$started=$true;$proc.StandardInput.Close()
+    $outTask=$proc.StandardOutput.ReadToEndAsync();$errTask=$proc.StandardError.ReadToEndAsync()
+    $remaining=[Math]::Max(1,$TimeoutSec*1000-[int]$timer.ElapsedMilliseconds)
+    if(-not $proc.WaitForExit($remaining)){Stop-NativeChild $proc;return @{exitCode=124;stdout='';stderr='timeout';durationMs=$timer.ElapsedMilliseconds}}
+    foreach($task in @($outTask,$errTask)){
+      $remaining=[Math]::Max(1,$TimeoutSec*1000-[int]$timer.ElapsedMilliseconds)
+      if(-not $task.Wait($remaining)){return @{exitCode=124;stdout='';stderr='timeout reading process output';durationMs=$timer.ElapsedMilliseconds}}
+    }
+    return @{exitCode=$proc.ExitCode;stdout=$outTask.Result;stderr=$errTask.Result;durationMs=$timer.ElapsedMilliseconds}
+  } catch {
+    if($started){Stop-NativeChild $proc};if($_.Exception -is [Management.Automation.PipelineStoppedException]){throw}
+    return @{exitCode=127;stdout='';stderr=$_.Exception.Message;durationMs=$timer.ElapsedMilliseconds}
+  } finally {if($started -and -not $proc.HasExited){Stop-NativeChild $proc};$proc.Dispose()}
+}
+function ConvertFrom-UsbipDevice($DeviceObject) {
+  $props=@{};foreach($property in $DeviceObject.PSObject.Properties){$props[$property.Name]=$property.Value}
+  $vendorId='';$productId='';$hardware=$props.HardwareId
+  if($null -ne $hardware -and $hardware.PSObject.Properties['Vid'] -and $hardware.PSObject.Properties['Pid']){
+    $vendorId=('{0:x4}' -f [int]$hardware.Vid);$productId=('{0:x4}' -f [int]$hardware.Pid)
+  } elseif([string]$hardware -match 'VID_([0-9A-Fa-f]{4}).*PID_([0-9A-Fa-f]{4})|^([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})$'){
+    if($Matches[1]){$vendorId=$Matches[1].ToLower();$productId=$Matches[2].ToLower()}else{$vendorId=$Matches[3].ToLower();$productId=$Matches[4].ToLower()}
+  }
+  $instance=[string]$props.InstanceId;$usbSerial='';if($instance -match '\\([^\\]+)$'){$usbSerial=$Matches[1]}
+  $usbState=if($props.IsAttached){'Attached'}elseif($props.IsBound){'Shared'}else{'Not shared'}
+  return [pscustomobject]@{busid=[string]$props.BusId;description=[string]$props.Description;vid=$vendorId;pid=$productId;serial=$usbSerial;deviceState=$usbState;state=$usbState;isConnected=[bool]$props.IsConnected;instanceId=$instance}
 }
 function Find-Usbipd { $p=Get-Command usbipd.exe,usbipd -ErrorAction SilentlyContinue | Select-Object -First 1; if($p){return $p.Source}; $candidate=Join-Path $env:ProgramW6432 'usbipd-win/usbipd.exe'; if(Test-Path $candidate){return $candidate}; return $null }
 function Get-UsbipState([string]$Usbipd) {
@@ -64,39 +98,139 @@ function Get-UsbipState([string]$Usbipd) {
   if(Test-Path -LiteralPath $module) {
     try {
       Import-Module $module -ErrorAction Stop
-      $devices=@(Get-UsbipdDevice | ForEach-Object {
-        $props=@{}; foreach($p in $_.PSObject.Properties){$props[$p.Name]=$p.Value}
-        $hardware=[string]$props.HardwareId
-        $vid='';$pid='';if($hardware -match 'VID_([0-9A-Fa-f]{4}).*PID_([0-9A-Fa-f]{4})'){$vid=$Matches[1].ToLower();$pid=$Matches[2].ToLower()}
-        $instance=[string]$props.InstanceId
-        $serial='';if($instance -match '\\([^\\]+)$'){$serial=$Matches[1]}
-        $state=if($props.IsAttached){'Attached'}elseif($props.IsBound){'Shared'}else{'Not shared'}
-        [pscustomobject]@{busid=[string]$props.BusId;description=[string]$props.Description;vid=$vid;pid=$pid;serial=$serial;deviceState=$state;state=$state;isConnected=[bool]$props.IsConnected;instanceId=$instance}
-      })
+      $devices=@(Get-UsbipdDevice | ForEach-Object {ConvertFrom-UsbipDevice $_})
       $v=Invoke-Native $Usbipd @('--version') 5
       return @{available=$true;version=$v.stdout.Trim();devices=$devices}
     } catch { return @{available=$false;error=$_.Exception.Message;devices=@()} }
   }
   return @{available=$false;error='Módulo Usbipd.Powershell.dll não encontrado; esperado na instalação versionada do usbipd-win.';devices=@()}
 }
+function ConvertFrom-WslList([string]$Text) {
+  foreach($line in (($Text -replace "`0",'') -split "`r?`n")){
+    if($line -match '^\s*(\*)?\s*(.+?)\s{2,}(.+?)\s+([12])\s*$'){
+      [pscustomobject]@{name=$Matches[2].Trim();state=$Matches[3].Trim();version=[int]$Matches[4];default=[bool]$Matches[1];running=$false}
+    }
+  }
+}
+function Get-WslDistributions {
+  $list=Invoke-Native 'wsl.exe' @('--list','--verbose') 3
+  if($list.exitCode -ne 0){return @{distributions=@();error=('Falha ao listar WSL: '+$list.stderr);available=$false}}
+  $items=@(ConvertFrom-WslList $list.stdout)
+  $running=Invoke-Native 'wsl.exe' @('--list','--running','--quiet') 3
+  if($running.exitCode -ne 0){return @{distributions=$items;error=('Falha ao consultar distribuições ativas: '+$running.stderr);available=$false}}
+  $names=@(($running.stdout -replace "`0",'') -split "`r?`n" | ForEach-Object {$_.Trim()} | Where-Object {$_})
+  foreach($item in $items){$item.running=$item.name -in $names}
+  return @{distributions=$items;error='';available=$true}
+}
 function Get-WslInfo {
-  $list=Invoke-Native 'wsl.exe' @('--list','--verbose') 10
+  $discovery=Get-WslDistributions
   $ver=Invoke-Native 'wsl.exe' @('--version') 10
-  $listText=$list.stdout -replace "`0",'';$items=@(); foreach($line in ($listText -split "`r?`n")){ if($line -match '^\s*(\*)?\s*(.+?)\s+(Running|Stopped)\s+(\d+)\s*$'){ $items+=@{name=$Matches[2].Trim();state=$Matches[3];version=[int]$Matches[4];default=[bool]$Matches[1]} } }
   $kernel=Invoke-Native 'wsl.exe' @('-e','uname','-r') 8
   $network='unknown';$wslConfig=Join-Path $env:USERPROFILE '.wslconfig';if(Test-Path $wslConfig){$line=Get-Content $wslConfig|Where-Object {$_ -match '^\s*networkingMode\s*='}|Select-Object -First 1;if($line -match '=\s*(\S+)'){$network=$Matches[1]}}
-  return @{ distributions=$items;version=($ver.stdout -replace "`0",'').Trim();kernel=$kernel.stdout.Trim();networkingMode=$network;error=$list.stderr }
+  return @{ distributions=$discovery.distributions;version=($ver.stdout -replace "`0",'').Trim();kernel=$kernel.stdout.Trim();networkingMode=$network;error=$discovery.error }
 }
 function Get-Adb([string]$DistroName) {
   $cmd="command -v adb; adb version 2>&1; printf '\nENV\n'; env | grep -E '^(ADB_SERVER_SOCKET|ANDROID_ADB_SERVER_PORT|ANDROID_ADB_SERVER_ADDRESS)=' || true; printf '\nPORTS\n'; (ss -ltnp 2>/dev/null || true) | grep -E ':(503[7-9]|504[0-2])\b' || true; printf '\nUSB\n'; (lsusb 2>&1 || true); printf '\nPROCESSES\n'; (ps -eo pid,args 2>/dev/null || true) | grep '[a]db'; printf '\nLOGS\n'; (dmesg --ctime 2>/dev/null | tail -n 20 || true); (tail -n 30 /tmp/adb.*.log 2>/dev/null | tail -n 30 || true)"
-  $r=Invoke-Native 'wsl.exe' @('-d',$DistroName,'--','bash','-lc',$cmd) 15
+  $r=Invoke-Native 'wsl.exe' @('-d',$DistroName,'--exec','bash','-c',$cmd) 15
   return @{exitCode=$r.exitCode;raw=$r.stdout;error=$r.stderr}
 }
+function ConvertFrom-AdbRows([string]$Text) {
+  foreach($line in ($Text -split "`r?`n")){
+    if($line -match '^([^\s]+)\s+(device|unauthorized|offline|no permissions)(?:\s+(.*))?$'){
+      @{serial=$Matches[1];state=$Matches[2];details=$(if($Matches.ContainsKey(3)){$Matches[3]}else{''})}
+    }
+  }
+}
 function Parse-AdbDevices([string]$DistroName,[int]$AdbPort) {
-  $args=@('-d',$DistroName,'--','env',"ANDROID_ADB_SERVER_PORT=$AdbPort","ADB_SERVER_SOCKET=tcp:localhost:$AdbPort",'adb','devices','-l')
-  $r=Invoke-Native 'wsl.exe' $args 15
-  $rows=@(); foreach($line in ($r.stdout -split "`r?`n")){ if($line -match '^([^\s]+)\s+(device|unauthorized|offline|no permissions)(?:\s+(.*))?$'){ $rows+=@{serial=$Matches[1];state=$Matches[2];details=$Matches[3]} } }
+  $nativeArguments=@('-d',$DistroName,'--exec','env',"ANDROID_ADB_SERVER_PORT=$AdbPort","ADB_SERVER_SOCKET=tcp:localhost:$AdbPort",'adb','devices','-l')
+  $r=Invoke-Native 'wsl.exe' $nativeArguments 15
+  $rows=@(ConvertFrom-AdbRows $r.stdout)
   return @{exitCode=$r.exitCode;devices=$rows;raw=$r.stdout;error=$r.stderr}
+}
+function Get-AdbStatus([string]$DistroName,[ValidateRange(1,65535)][int]$AdbPort) {
+  # Query the smart socket directly. `adb devices` can start a daemon or replace
+  # an incompatible one, so the read-only status path never invokes that client.
+  $probe=@'
+printf 'ADB_PATH\t'; command -v adb || true
+fail() { printf 'ADB_STATUS\tERROR\nADB_ERROR\t%s\n' "$1"; exit 0; }
+if ! { exec 3<>/dev/tcp/127.0.0.1/"$1"; } 2>/dev/null; then
+  printf 'ADB_STATUS\tSERVER_ABSENT\n'; exit 0
+fi
+printf '000Ehost:devices-l' >&3
+IFS= read -r -t 1 -N 4 reply <&3 || fail 'Servidor sem resposta ADB'
+[[ "$reply" == OKAY || "$reply" == FAIL ]] || fail 'Porta ocupada por protocolo diferente de ADB'
+IFS= read -r -t 1 -N 4 size <&3 || fail 'Resposta ADB incompleta'
+[[ "$size" =~ ^[0-9a-fA-F]{4}$ ]] || fail 'Tamanho ADB invalido'
+length=$((16#$size))
+payload=''
+if (( length )); then
+  IFS= read -r -t 1 -N "$length" payload <&3 || fail 'Resposta ADB truncada ou lenta'
+fi
+if [[ "$reply" == FAIL ]]; then fail "$payload"; fi
+printf 'ADB_STATUS\tAVAILABLE\nADB_DEVICES\n%s\n' "$payload"
+'@
+  $r=Invoke-Native 'wsl.exe' @('-d',$DistroName,'--exec','bash','-c',$probe,'android-connect-status',[string]$AdbPort) 5
+  $result=@{state='ERROR';devices=@();path='';error=''}
+  if($r.exitCode -ne 0){$result.error="Consulta ADB falhou (exit=$($r.exitCode)): $($r.stderr)";return $result}
+  foreach($line in ($r.stdout -split "`r?`n")){
+    if($line -match '^ADB_PATH\t(.*)$'){$result.path=$Matches[1]}
+    if($line -match '^ADB_STATUS\t(AVAILABLE|SERVER_ABSENT|ERROR)$'){$result.state=$Matches[1]}
+    if($line -match '^ADB_ERROR\t(.*)$'){$result.error=$Matches[1]}
+  }
+  $sections=$r.stdout -split '(?m)^ADB_DEVICES\r?$',2
+  if($sections.Count -eq 2){$result.devices=@(ConvertFrom-AdbRows $sections[1])}
+  if($result.state -eq 'ERROR' -and -not $result.error){$result.error='A consulta não retornou um estado ADB válido.'}
+  return $result
+}
+function Get-StatusSnapshot([string]$DistroName='',[int]$AdbPort=0) {
+  $timer=[Diagnostics.Stopwatch]::StartNew();$config=Read-Config
+  $problems=[Collections.Generic.List[string]]::new()
+  $wsl=Get-WslDistributions
+  if($wsl.error){$problems.Add([string]$wsl.error)}
+  $chosenName=if($DistroName){$DistroName}elseif($config.distro){[string]$config.distro}else{''}
+  $distribution=if($chosenName){@($wsl.distributions|Where-Object {$_.name -eq $chosenName})|Select-Object -First 1}else{@($wsl.distributions|Where-Object default)|Select-Object -First 1}
+  $selectedName=$null
+  if($distribution){$selectedName=[string]$distribution.name}else{$problems.Add('Distribuição WSL não encontrada. Use --distro NOME para selecionar uma distribuição instalada.')}
+  $selectedPort=if($AdbPort){$AdbPort}elseif($config.adbPort){[int]$config.adbPort}else{5037}
+  $usbipdPath=Find-Usbipd
+  $usb=if($usbipdPath){Get-UsbipState $usbipdPath}else{@{available=$false;devices=@();error='usbipd não encontrado no Windows.'}}
+  if($usb.error){$problems.Add([string]$usb.error)}
+  $connected=@($usb.devices|Where-Object isConnected)
+  $selection=Find-UsbCandidate -Devices $connected -Serial ([string]$config.serial) -BusId '' -VidPids @($config.usbIds)
+  $selectedUsb=$selection.device
+  $statusState=if($selectedUsb){Get-UsbStateClass ([string]$selectedUsb.deviceState)}elseif($selection.status -eq 'ambiguous'){'DEVICE_SELECTION_REQUIRED'}else{'USB_NOT_FOUND'}
+  $adb=if(-not $distribution){@{state='WSL_UNAVAILABLE';devices=@();path='';error=''}}elseif(-not $distribution.running){@{state='WSL_STOPPED';devices=@();path='';error=''}}else{Get-AdbStatus $selectedName $selectedPort}
+  if($adb.error){$problems.Add([string]$adb.error)}
+  return [ordered]@{state=$statusState;distro=$selectedName;port=$selectedPort;usbipd=$usb;selectedUsb=$selectedUsb;adb=$adb;adbDevices=@($adb.devices);errors=@($problems.ToArray());elapsedMs=$timer.ElapsedMilliseconds}
+}
+function Format-StatusSnapshot($Snapshot) {
+  $lines=[Collections.Generic.List[string]]::new()
+  $lines.Add('Android Connect - status')
+  $distributionText=if($Snapshot.distro){$Snapshot.distro}else{'não encontrada'}
+  $lines.Add("WSL : $distributionText")
+  if($Snapshot.selectedUsb){$lines.Add("USB : $($Snapshot.selectedUsb.deviceState) | BUSID $($Snapshot.selectedUsb.busid) | $($Snapshot.selectedUsb.description)")}
+  elseif(-not $Snapshot.usbipd.available){$lines.Add('USB : descoberta indisponível')}
+  else{$lines.Add('USB : nenhum dispositivo selecionado conectado')}
+  switch($Snapshot.adb.state){
+    'AVAILABLE' {$lines.Add("ADB : servidor respondendo na porta $($Snapshot.port)")}
+    'SERVER_ABSENT' {$lines.Add("ADB : nenhum servidor acessível na porta $($Snapshot.port); execute android-connect para conectar")}
+    'WSL_STOPPED' {$lines.Add('ADB : não consultado; a distribuição está parada e foi preservada')}
+    'WSL_UNAVAILABLE' {$lines.Add('ADB : não consultado; distribuição indisponível')}
+    default {$lines.Add('ADB : consulta falhou')}
+  }
+  if($Snapshot.adb.path){$lines.Add("ADB Linux : $($Snapshot.adb.path)")}
+  $lines.Add('Dispositivos ADB:')
+  if(@($Snapshot.adbDevices).Count -eq 0){$lines.Add('  nenhum listado nesta consulta')}
+  foreach($transport in $Snapshot.adbDevices){$kind=if($transport.serial -match '^emulator-'){'emulador'}else{'físico'};$lines.Add("  $($transport.serial) | $($transport.state) | $kind")}
+  if($Snapshot.selectedUsb -and $Snapshot.adb.state -eq 'AVAILABLE'){
+    $physical=@($Snapshot.adbDevices|Where-Object {$_.serial -eq $Snapshot.selectedUsb.serial})
+    if($physical.Count -eq 0){$lines.Add('Celular : não listado neste servidor; execute android-connect para conectar')}
+    else{$lines.Add("Celular : $($physical[0].state) no ADB; status não executa a validação shell de connect")}
+  }
+  foreach($problem in $Snapshot.errors){$lines.Add("Erro: $problem")}
+  $seconds=([double]$Snapshot.elapsedMs/1000).ToString('0.00',[Globalization.CultureInfo]::InvariantCulture)
+  $lines.Add("Consulta: ${seconds}s | use --json para saída estruturada ou doctor para diagnóstico completo")
+  return $lines -join [Environment]::NewLine
 }
 function Get-AdbListeningPorts([string]$DiagnosticText) {
   $ports=@();foreach($match in [regex]::Matches($DiagnosticText,':(503[7-9]|504[0-2])\s')){$ports+= [int]$match.Groups[1].Value};return @($ports|Select-Object -Unique)
@@ -104,7 +238,7 @@ function Get-AdbListeningPorts([string]$DiagnosticText) {
 function Show-Result($obj) { if($Json){$obj|ConvertTo-Json -Depth 12;return}; $obj }
 function Select-Android($usbDevices,$Config) {
   $wanted=if($Serial){$Serial}else{[string]$Config.serial}
-  $candidate=Find-UsbCandidate -Devices $usbDevices -Serial $wanted -BusId $Device -VidPids @($Config.usbIds) -StrictSerial ([bool]$Serial)
+  $candidate=Find-UsbCandidate -Devices @($usbDevices|Where-Object isConnected) -Serial $wanted -BusId $Device -VidPids @($Config.usbIds) -StrictSerial ([bool]$Serial)
   if($candidate.status -eq 'selected'){return $candidate.device}
   if($candidate.status -ne 'ambiguous'){return $null}
   $eligible=$candidate.candidates
@@ -174,7 +308,7 @@ function Invoke-Connect {
     $statesSummary=(@($adb.devices|ForEach-Object{"$($_.state)"}) -join ', ');throw "ADB não disponibilizou o serial físico na porta $port. Estados observados: $statesSummary"
   }
   $serialUsed=$physical[0].serial
-  $validation=Invoke-Native 'wsl.exe' @('-d',$selectedDistro,'--','env',"ANDROID_ADB_SERVER_PORT=$port","ADB_SERVER_SOCKET=tcp:localhost:$port",'adb','-s',$serialUsed,'shell','getprop','ro.product.model') 12
+  $validation=Invoke-Native 'wsl.exe' @('-d',$selectedDistro,'--exec','env',"ANDROID_ADB_SERVER_PORT=$port","ADB_SERVER_SOCKET=tcp:localhost:$port",'adb','-s',$serialUsed,'shell','getprop','ro.product.model') 12
   if($validation.exitCode -ne 0 -or -not $validation.stdout.Trim()){throw 'O comando real getprop falhou; dispositivo não será declarado pronto.'}
   $model=$validation.stdout.Trim()
   $canonicalModel=$model.ToUpperInvariant().Replace('_','-');$expectedModel=([string]$config.expectedModel).ToUpperInvariant().Replace('_','-')
@@ -217,13 +351,13 @@ android-connect [status|doctor|fix|devices|disconnect|logs|env|exec] [opções]
 Sem comando: conecta, aplica apenas correções seguras e valida com getprop.
 '@; exit 0 }
   {$_ -in 'connect',''} { try{$code=Invoke-Connect;exit [int]$code}catch{Write-Event connect failed $_.Exception.Message error;Write-Error $_.Exception.Message;exit 1} }
-  'status' { $config=Read-Config; $dist=if($Distro){$Distro}elseif($config.distro){$config.distro}else{(Get-WslInfo).distributions|Where-Object default|Select-Object -ExpandProperty name -First 1}; $port=if($Port){$Port}elseif($config.adbPort){$config.adbPort}else{5037}; $diag=if($dist){Get-Adb $dist}else{@{raw=''}};$d=if($dist -and $port -in (Get-AdbListeningPorts $diag.raw)){Parse-AdbDevices $dist $port}else{@{devices=@()}}; $o=@{distro=$dist;port=$port;adbDevices=$d.devices;usbipd=$(if($u=Find-Usbipd){Get-UsbipState $u}else{$null})}; if($Json){$o|ConvertTo-Json -Depth 8}else{$o|ConvertTo-Json -Depth 8};exit 0 }
+  'status' { $snapshot=Get-StatusSnapshot -DistroName $Distro -AdbPort $Port;if($Json){$snapshot|ConvertTo-Json -Depth 12}else{Format-StatusSnapshot $snapshot};if($snapshot.errors.Count){exit 1};exit 0 }
   'doctor' { Invoke-Doctor;exit 0 }
   'fix' { if(-not $DryRun){Write-Host 'Aplicando somente correções seguras via fluxo de conexão.'}; try{$code=Invoke-Connect;exit [int]$code}catch{Write-Error $_.Exception.Message;exit 1} }
   'devices' { $config=Read-Config; $dist=if($Distro){$Distro}elseif($config.distro){$config.distro}else{(Get-WslInfo).distributions|Where-Object default|Select-Object -ExpandProperty name -First 1}; $port=if($Port){$Port}elseif($config.adbPort){$config.adbPort}else{5037};$diag=Get-Adb $dist;$o=if($port -in (Get-AdbListeningPorts $diag.raw)){(Parse-AdbDevices $dist $port).devices}else{@()}; if($Json){$o|ConvertTo-Json -Depth 5}else{$o|Format-Table -AutoSize};exit 0 }
   'disconnect' { $config=Read-Config; $dist=if($Distro){$Distro}elseif($config.distro){$config.distro}else{(Get-WslInfo).distributions|Where-Object default|Select-Object -ExpandProperty name -First 1}; $ser=if($Serial){$Serial}else{[string]$config.serial}; if(-not $ser){throw 'Configure ou informe --serial.'}; $u=Find-Usbipd;$st=Get-UsbipState $u;$dev=@($st.devices|Where-Object {$_.deviceState -match 'Attached' -and ($_.serial -eq $ser -or $_.description -match [regex]::Escape($ser))})|Select-Object -First 1; if(-not $dev){Write-Host 'Dispositivo não está Attached.';exit 0}; if(-not $Yes){$answer=Read-Host "Desconectar $($dev.busid) do WSL? [s/N]";if($answer -notmatch '^(s|sim)$'){exit 3}}; $r=Invoke-Native $u @('detach','--busid',[string]$dev.busid) 15; if($r.exitCode){throw $r.stderr}; Write-Host "Desconectado: $($dev.busid)";exit 0 }
   'logs' { if(Test-Path $script:LogPath){Get-Content $script:LogPath -Tail 50}else{Write-Host 'Nenhum log disponível.'};exit 0 }
   'env' { $config=Read-Config;$port=if($Port){$Port}elseif($config.adbPort){$config.adbPort}else{5037}; Write-Output "ANDROID_ADB_SERVER_PORT=$port"; Write-Output "ADB_SERVER_SOCKET=tcp:localhost:$port";exit 0 }
-  'exec' { if(-not $Remaining -or $Remaining[0] -ne '--'){throw 'Uso: android-connect exec -- <comando> [argumentos]'}; $config=Read-Config;$dist=if($Distro){$Distro}elseif($config.distro){$config.distro}else{(Get-WslInfo).distributions|Where-Object default|Select-Object -ExpandProperty name -First 1};$port=if($Port){$Port}elseif($config.adbPort){$config.adbPort}else{5037};$cmds=@($Remaining|Select-Object -Skip 1);if(-not $cmds){throw 'Comando vazio.'}; & wsl.exe -d $dist -- env "ANDROID_ADB_SERVER_PORT=$port" "ADB_SERVER_SOCKET=tcp:localhost:$port" @cmds; exit $LASTEXITCODE }
+  'exec' { if(-not $Remaining -or $Remaining[0] -ne '--'){throw 'Uso: android-connect exec -- <comando> [argumentos]'}; $config=Read-Config;$dist=if($Distro){$Distro}elseif($config.distro){$config.distro}else{(Get-WslInfo).distributions|Where-Object default|Select-Object -ExpandProperty name -First 1};$port=if($Port){$Port}elseif($config.adbPort){$config.adbPort}else{5037};$cmds=@($Remaining|Select-Object -Skip 1);if(-not $cmds){throw 'Comando vazio.'}; & wsl.exe -d $dist --exec env "ANDROID_ADB_SERVER_PORT=$port" "ADB_SERVER_SOCKET=tcp:localhost:$port" @cmds; exit $LASTEXITCODE }
   default { Write-Error "Comando desconhecido: $Command";exit 2 }
 }

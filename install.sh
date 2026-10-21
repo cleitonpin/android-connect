@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-version="${ANDROID_CONNECT_VERSION:-v0.1.0}"
+version="${ANDROID_CONNECT_VERSION:-v0.1.1}"
 [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'Versao invalida\n' >&2; exit 1; }
 for dependency in curl sha256sum awk; do
   command -v "$dependency" >/dev/null || { printf 'Dependencia ausente: %s\n' "$dependency" >&2; exit 1; }
