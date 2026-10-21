@@ -8,6 +8,7 @@ param(
   [int]$Port = 0,
   [string]$OutputPath,
   [ValidateSet('text','json')][string]$Format = 'text',
+  [ValidateSet('bash','powershell')][string]$ShellName = 'bash',
   [switch]$DryRun,
   [switch]$VerboseOutput,
   [switch]$Json,
@@ -41,6 +42,12 @@ function Read-Config {
   $default=[ordered]@{ version=1; distro=''; serial='RX8XA05QK1P'; expectedModel='SM-A155M'; adbPort=0; usbIds=@('04e8:6860') }
   if (Test-Path -LiteralPath $script:ConfigPath) { try { $loaded=Get-Content -Raw -LiteralPath $script:ConfigPath | ConvertFrom-Json; foreach($p in $loaded.PSObject.Properties){$default[$p.Name]=$p.Value} } catch { Write-Event config invalid 'Configuração inválida; usando padrões.' warning } }
   return $default
+}
+function Format-AdbEnvironment([ValidateRange(1,65535)][int]$AdbPort,[ValidateSet('bash','powershell')][string]$ShellName='bash') {
+  if($ShellName -eq 'powershell'){
+    return "`$env:ANDROID_ADB_SERVER_PORT='$AdbPort'`n`$env:ADB_SERVER_SOCKET='tcp:localhost:$AdbPort'`n"
+  }
+  return "export ANDROID_ADB_SERVER_PORT='$AdbPort'`nexport ADB_SERVER_SOCKET='tcp:localhost:$AdbPort'`n"
 }
 function Invoke-Native([string]$File,[string[]]$Arguments,[ValidateRange(1,60)][int]$TimeoutSec=12) {
   $timer=[Diagnostics.Stopwatch]::StartNew()
@@ -317,7 +324,10 @@ function Invoke-Connect {
   $dir=Split-Path -Parent $script:ConfigPath; [IO.Directory]::CreateDirectory($dir)|Out-Null; $config|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $script:ConfigPath -Encoding UTF8
   Write-Event connect ready "Serial validado em porta $port"
   $out=@{state='READY';serial=$serialUsed;model=$model;distro=$selectedDistro;port=$port;devices=$adb.devices;usbState='Attached';physicalValidation='adb shell getprop ro.product.model'}
-  if($Json){$out|ConvertTo-Json -Depth 8}else{Write-Host "Android conectado — $($out.model) [$serialUsed] via ADB :$port ($selectedDistro)" -ForegroundColor Green}
+  if($Json){$out|ConvertTo-Json -Depth 8}else{
+    Write-Host "Android conectado — $($out.model) [$serialUsed] via ADB :$port ($selectedDistro)" -ForegroundColor Green
+    Write-Host 'Para usar adb direto nesta sessão WSL: eval "$(android-connect env)"'
+  }
   return 0
 }
 function Invoke-Doctor {
@@ -344,10 +354,12 @@ function Invoke-Doctor {
 }
 switch($Command.ToLowerInvariant()){
   {$_ -in 'help','-h','--help'} { @'
-android-connect [status|doctor|fix|devices|disconnect|logs|env|exec] [opções]
+android-connect [status|doctor|fix|devices|disconnect|logs|env|exec|shell-init] [opções]
   --device BUSID | --serial SERIAL | --distro NAME | --port PORT
   --format text|json --output PATH (doctor)
   --dry-run --verbose --json --yes
+  env [--shell bash|powershell] [--json] : ambiente do servidor selecionado
+  shell-init : integração Bash opcional; eval "$(android-connect shell-init)"
 Sem comando: conecta, aplica apenas correções seguras e valida com getprop.
 '@; exit 0 }
   {$_ -in 'connect',''} { try{$code=Invoke-Connect;exit [int]$code}catch{Write-Event connect failed $_.Exception.Message error;Write-Error $_.Exception.Message;exit 1} }
@@ -357,7 +369,18 @@ Sem comando: conecta, aplica apenas correções seguras e valida com getprop.
   'devices' { $config=Read-Config; $dist=if($Distro){$Distro}elseif($config.distro){$config.distro}else{(Get-WslInfo).distributions|Where-Object default|Select-Object -ExpandProperty name -First 1}; $port=if($Port){$Port}elseif($config.adbPort){$config.adbPort}else{5037};$diag=Get-Adb $dist;$o=if($port -in (Get-AdbListeningPorts $diag.raw)){(Parse-AdbDevices $dist $port).devices}else{@()}; if($Json){$o|ConvertTo-Json -Depth 5}else{$o|Format-Table -AutoSize};exit 0 }
   'disconnect' { $config=Read-Config; $dist=if($Distro){$Distro}elseif($config.distro){$config.distro}else{(Get-WslInfo).distributions|Where-Object default|Select-Object -ExpandProperty name -First 1}; $ser=if($Serial){$Serial}else{[string]$config.serial}; if(-not $ser){throw 'Configure ou informe --serial.'}; $u=Find-Usbipd;$st=Get-UsbipState $u;$dev=@($st.devices|Where-Object {$_.deviceState -match 'Attached' -and ($_.serial -eq $ser -or $_.description -match [regex]::Escape($ser))})|Select-Object -First 1; if(-not $dev){Write-Host 'Dispositivo não está Attached.';exit 0}; if(-not $Yes){$answer=Read-Host "Desconectar $($dev.busid) do WSL? [s/N]";if($answer -notmatch '^(s|sim)$'){exit 3}}; $r=Invoke-Native $u @('detach','--busid',[string]$dev.busid) 15; if($r.exitCode){throw $r.stderr}; Write-Host "Desconectado: $($dev.busid)";exit 0 }
   'logs' { if(Test-Path $script:LogPath){Get-Content $script:LogPath -Tail 50}else{Write-Host 'Nenhum log disponível.'};exit 0 }
-  'env' { $config=Read-Config;$port=if($Port){$Port}elseif($config.adbPort){$config.adbPort}else{5037}; Write-Output "ANDROID_ADB_SERVER_PORT=$port"; Write-Output "ADB_SERVER_SOCKET=tcp:localhost:$port";exit 0 }
+  'env' {
+    $config=Read-Config;$chosenPort=if($Port){$Port}elseif($config.adbPort){[int]$config.adbPort}else{5037}
+    $text=Format-AdbEnvironment -AdbPort $chosenPort -ShellName $ShellName
+    if($Json){[ordered]@{ANDROID_ADB_SERVER_PORT=[string]$chosenPort;ADB_SERVER_SOCKET="tcp:localhost:$chosenPort"}|ConvertTo-Json}
+    else{[Console]::Out.Write($text)}
+    exit 0
+  }
+  'shell-init' {
+    if($ShellName -ne 'bash'){throw 'shell-init suporta Bash. No PowerShell, aplique android-connect env --shell powershell com Invoke-Expression.'}
+    [Console]::Out.Write((Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'android-connect.bash') -Encoding UTF8))
+    exit 0
+  }
   'exec' { if(-not $Remaining -or $Remaining[0] -ne '--'){throw 'Uso: android-connect exec -- <comando> [argumentos]'}; $config=Read-Config;$dist=if($Distro){$Distro}elseif($config.distro){$config.distro}else{(Get-WslInfo).distributions|Where-Object default|Select-Object -ExpandProperty name -First 1};$port=if($Port){$Port}elseif($config.adbPort){$config.adbPort}else{5037};$cmds=@($Remaining|Select-Object -Skip 1);if(-not $cmds){throw 'Comando vazio.'}; & wsl.exe -d $dist --exec env "ANDROID_ADB_SERVER_PORT=$port" "ADB_SERVER_SOCKET=tcp:localhost:$port" @cmds; exit $LASTEXITCODE }
   default { Write-Error "Comando desconhecido: $Command";exit 2 }
 }

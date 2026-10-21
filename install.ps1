@@ -1,7 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-  [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = 'v0.1.1',
+  [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = 'v0.1.2',
   [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'Programs/AndroidConnect'),
   [switch]$NoPath
 )
@@ -11,7 +11,7 @@ param(
   $ErrorActionPreference = 'Stop'
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
   $base = "https://raw.githubusercontent.com/cleitonpin/android-connect/$Version"
-  $files = @('src/AndroidConnect.ps1', 'src/AndroidConnect.Core.psm1', 'bin/android-connect', 'bin/android-connect.ps1')
+  $files = @('src/AndroidConnect.ps1', 'src/AndroidConnect.Core.psm1', 'src/android-connect.bash', 'bin/android-connect', 'bin/android-connect.ps1', 'LICENSE')
   [IO.Directory]::CreateDirectory($InstallDirectory) | Out-Null
   $stage = Join-Path $InstallDirectory ('.stage-' + [guid]::NewGuid().ToString('N'))
   $current = Join-Path $InstallDirectory 'current'

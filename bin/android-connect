@@ -21,7 +21,7 @@ for arg in "$@"; do
   case "$arg" in
     --device) args+=( -Device );; --serial) args+=( -Serial );; --distro) args+=( -Distro );; --port) args+=( -Port );;
     --dry-run) args+=( -DryRun );; --verbose) args+=( -VerboseOutput );; --json) args+=( -Json );; --yes) args+=( -Yes );;
-    --output) args+=( -OutputPath );; --format) args+=( -Format );;
+    --output) args+=( -OutputPath );; --format) args+=( -Format );; --shell) args+=( -ShellName );;
     *) args+=( "$arg" ); [[ "$arg" == "exec" ]] && exec_seen=1 || true;;
   esac
 done

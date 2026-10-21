@@ -9,7 +9,7 @@
 
 ## Distribuição
 
-O bootstrap da branch main aponta para uma tag de versão explícita (`v0.1.1`). Ele baixa uma lista fixa de quatro arquivos e o manifesto SHA256SUMS. O manifesto não fornece uma assinatura independente: a origem continua sendo o publicador no GitHub por HTTPS. Uma falha de download ou hash interrompe a promoção e mantém a instalação anterior.
+O bootstrap da branch main aponta para uma tag de versão explícita (`v0.1.2`). Ele baixa uma lista fixa de seis arquivos, incluindo o hook Bash e a licença MIT, mais o manifesto SHA256SUMS. O manifesto não fornece uma assinatura independente: a origem continua sendo o publicador no GitHub por HTTPS. Uma falha de download ou hash interrompe a promoção e mantém a instalação anterior.
 
 No Windows o comando é um shim CMD em um diretório do PATH do usuário, sem editar perfis PowerShell. No WSL o comando é um symlink em ~/.local/bin. O instalador WSL informa como ajustar o PATH da sessão se necessário; ele não consegue alterar o ambiente do shell pai por um pipe.
 
@@ -29,3 +29,13 @@ No Windows o comando é um shim CMD em um diretório do PATH do usuário, sem ed
 O executor recebe `Arguments`, fecha stdin e limita tanto o processo quanto a leitura dos pipes. `WSL_UTF8=1` vale apenas no processo filho; a configuração global do host não é alterada. Comandos Linux usam `--exec` para impedir uma passagem adicional pelo shell padrão.
 
 Os testes de regressão incluem processos Windows reais para argumentos e timeout, os formatos tipados do usbipd, listagens WSL localizadas e a saída JSON do comando completo. A investigação do primeiro problema de uso está em [status-v0.1.1.md](status-v0.1.1.md).
+
+## Ambiente do terminal
+
+A porta persistida na configuração pertence à CLI. Um `adb` iniciado pelo shell pai continua com seu próprio ambiente até que esse shell aplique a configuração.
+
+`env` gera instruções com portas validadas: exports para Bash, atribuições para PowerShell ou dados JSON. A saída de código usa LF diretamente no stdout, evitando que CRLF do host Windows entre nos valores exportados pelo Bash.
+
+`shell-init` emite o arquivo `src/android-connect.bash`. Ao ser avaliada na sessão, a função resultante usa `command android-connect` para chamar o executável sem recursão. Só depois de `connect` ou `fix` retornar sucesso ela consulta `env` e exporta o resultado. Chamadas de consulta e `exec` são encaminhadas ao executável. A função não modifica perfis do usuário.
+
+Essa integração é opcional. `exec` permanece disponível para restringir a configuração ao processo filho. Ferramentas Windows e WSL podem usar servidores diferentes; aplicar variáveis em um shell Windows não comprova que localhost nessa sessão alcança o servidor Linux.

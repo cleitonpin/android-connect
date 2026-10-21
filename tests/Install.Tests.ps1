@@ -4,6 +4,7 @@ BeforeAll {
   $script:FixtureRoot = Join-Path $TestDrive 'payload'
   New-Item -ItemType Directory -Path $script:FixtureRoot | Out-Null
   Copy-Item (Join-Path $script:ProjectRoot 'SHA256SUMS') $script:FixtureRoot
+  Copy-Item (Join-Path $script:ProjectRoot 'LICENSE') $script:FixtureRoot
   Copy-Item (Join-Path $script:ProjectRoot 'src') $script:FixtureRoot -Recurse
   Copy-Item (Join-Path $script:ProjectRoot 'bin') $script:FixtureRoot -Recurse
 }
@@ -13,7 +14,7 @@ Describe 'Standalone PowerShell installer' {
     $downloadRoot = $script:FixtureRoot
     Mock Invoke-WebRequest -MockWith ({
       param($Uri, $OutFile)
-      $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.1/', ''
+      $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.2/', ''
       Copy-Item -LiteralPath (Join-Path $downloadRoot $relative) -Destination $OutFile
     }.GetNewClosure())
   }
@@ -24,6 +25,8 @@ Describe 'Standalone PowerShell installer' {
     & $installerBlock -InstallDirectory $dest -NoPath
     Test-Path (Join-Path $dest 'current/src/AndroidConnect.ps1') | Should -BeTrue
     Test-Path (Join-Path $dest 'bin/android-connect.cmd') | Should -BeTrue
+    Test-Path (Join-Path $dest 'current/src/android-connect.bash') | Should -BeTrue
+    Test-Path (Join-Path $dest 'current/LICENSE') | Should -BeTrue
   }
 
   It 'can be installed twice without nesting directories or losing files' {
@@ -51,7 +54,7 @@ Describe 'Standalone PowerShell installer' {
     $downloadRoot = $script:FixtureRoot
     Mock Invoke-WebRequest -MockWith ({
       param($Uri, $OutFile)
-      $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.1/', ''
+      $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.2/', ''
       Copy-Item -LiteralPath (Join-Path $downloadRoot $relative) -Destination $OutFile
       if ($relative -eq 'src/AndroidConnect.ps1') { Add-Content $OutFile 'corrupted' }
     }.GetNewClosure())
@@ -92,5 +95,11 @@ Describe 'Windows command argument forwarding' {
     $actual | Should -Contain '--device'
     $actual | Should -Contain 'serial with spaces'
     $actual | Should -Contain '--flag=a;b'
+  }
+  It 'maps the requested environment shell without changing the command arguments' {
+    & (Join-Path $script:ProjectRoot 'bin/android-connect.ps1') env --shell powershell
+    $actual = Get-Content -Raw $script:Capture | ConvertFrom-Json
+    $actual | Should -Contain '-ShellName'
+    $actual | Should -Contain 'powershell'
   }
 }

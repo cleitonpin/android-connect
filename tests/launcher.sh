@@ -23,6 +23,9 @@ grep -Fx -- 'report with spaces.json' "$tmp/args" >/dev/null
 grep -Fx -- '-Distro' "$tmp/args" >/dev/null
 grep -Fx -- 'Ubuntu' "$tmp/args" >/dev/null
 grep -Fx -- 'doctor' "$tmp/args" >/dev/null
+"$tmp/user-bin/android-connect" env --shell bash
+grep -Fx -- '-ShellName' "$tmp/args" >/dev/null
+grep -Fx -- 'bash' "$tmp/args" >/dev/null
 "$tmp/user-bin/android-connect" exec -- npx expo run:android --device 'serial with spaces' --flag='a;b'
 grep -Fx -- '--device' "$tmp/args" >/dev/null
 grep -Fx -- 'serial with spaces' "$tmp/args" >/dev/null

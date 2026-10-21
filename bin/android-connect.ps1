@@ -5,6 +5,7 @@ $flags = @{
   '--device'='-Device'; '--serial'='-Serial'; '--distro'='-Distro'; '--port'='-Port'
   '--output'='-OutputPath'; '--format'='-Format'; '--json'='-Json'; '--yes'='-Yes'
   '--dry-run'='-DryRun'; '--verbose'='-VerboseOutput'
+  '--shell'='-ShellName'
 }
 $execSeen = $false
 $passthrough = $false

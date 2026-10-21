@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-version="${ANDROID_CONNECT_VERSION:-v0.1.1}"
+version="${ANDROID_CONNECT_VERSION:-v0.1.2}"
 [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'Versao invalida\n' >&2; exit 1; }
 for dependency in curl sha256sum awk; do
   command -v "$dependency" >/dev/null || { printf 'Dependencia ausente: %s\n' "$dependency" >&2; exit 1; }
@@ -15,7 +15,7 @@ download() {
   curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 30 --output "$stage/$1" "$base/$1"
 }
 download SHA256SUMS
-files=(src/AndroidConnect.ps1 src/AndroidConnect.Core.psm1 bin/android-connect bin/android-connect.ps1)
+files=(src/AndroidConnect.ps1 src/AndroidConnect.Core.psm1 src/android-connect.bash bin/android-connect bin/android-connect.ps1 LICENSE)
 for file in "${files[@]}"; do
   mkdir -p "$(dirname -- "$stage/$file")"
   expected="$(awk -v file="$file" '$2 == file { print $1 }' "$stage/SHA256SUMS")"

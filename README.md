@@ -54,7 +54,7 @@ irm https://raw.githubusercontent.com/cleitonpin/android-connect/main/install.ps
 android-connect help
 ```
 
-O instalador baixa os arquivos da CLI para `%LOCALAPPDATA%\Programs\AndroidConnect` e confere seus hashes SHA-256. A pasta `bin` entra no `PATH` do usuário e da sessão atual, sem exigir administrador. ADB, WSL e usbipd-win precisam estar instalados. Mesmo iniciado pelo Windows, o comando usa o ADB dentro do WSL.
+O instalador baixa os arquivos da CLI e a licença para `%LOCALAPPDATA%\Programs\AndroidConnect` e confere seus hashes SHA-256. A pasta `bin` entra no `PATH` do usuário e da sessão atual, sem exigir administrador. ADB, WSL e usbipd-win precisam estar instalados. Mesmo iniciado pelo Windows, o comando usa o ADB dentro do WSL.
 
 No terminal WSL:
 
@@ -81,7 +81,7 @@ Invoke-WebRequest https://raw.githubusercontent.com/cleitonpin/android-connect/m
 & .\install-android-connect.ps1
 ```
 
-Para não alterar o PATH no Windows, execute o arquivo com `-NoPath`. Para fixar uma versão, use `-Version v0.1.1` no PowerShell ou `ANDROID_CONNECT_VERSION=v0.1.1 bash install.sh` no WSL, depois de baixar o instalador. Nenhum perfil de shell é editado. Use `ANDROID_CONNECT_POWERSHELL=pwsh.exe` no WSL ou `$env:ANDROID_CONNECT_POWERSHELL='pwsh.exe'` no Windows para escolher PowerShell 7.
+Para não alterar o PATH no Windows, execute o arquivo com `-NoPath`. Para fixar uma versão, use `-Version v0.1.2` no PowerShell ou `ANDROID_CONNECT_VERSION=v0.1.2 bash install.sh` no WSL, depois de baixar o instalador. Nenhum perfil de shell é editado. Use `ANDROID_CONNECT_POWERSHELL=pwsh.exe` no WSL ou `$env:ANDROID_CONNECT_POWERSHELL='pwsh.exe'` no Windows para escolher PowerShell 7.
 
 Para desenvolver a ferramenta, clone o repositório:
 
@@ -104,6 +104,8 @@ android-connect doctor --json    # diagnóstico em JSON
 android-connect fix              # aplicar recuperação segura
 android-connect logs             # eventos recentes
 android-connect disconnect       # desconectar somente o dispositivo selecionado
+android-connect env              # gerar exports da porta selecionada
+android-connect shell-init       # gerar a integração Bash da sessão
 ```
 
 `status` mostra um resumo em texto e o tempo da consulta. Para JSON, use `android-connect status --json`. Ele não inicia distribuições paradas nem servidores ADB e não coleta logs ou informações de kernel; essa coleta fica no `doctor`. Um USB em `Attached` pode continuar ausente no ADB, e a saída mostra essa diferença.
@@ -119,6 +121,39 @@ Se instalou a v0.1.0, reexecute o instalador para receber a correção da lentid
 Opções: `--device BUSID`, `--serial SERIAL`, `--distro NOME`, `--port N`, `--dry-run`, `--verbose`, `--json`, `--yes`. Use `--output CAMINHO` para exportar o relatório do doctor. `--yes` dispensa confirmações apenas nas operações classificadas como seguras; não autoriza `bind --force`, unbind ou alterações de sistema.
 
 Se houver mais de um Android correspondente e nenhuma preferência configurada, a CLI pede que você escolha um deles. Você pode salvar essa preferência na configuração local. A identificação como Samsung, por si só, não basta para selecionar o Galaxy A15.
+
+## Fazer o adb do terminal usar o celular conectado
+
+Se a conexão funcionou na 5038, um `adb devices` sem configuração ainda pode consultar a 5037 e listar só o emulador. A CLI salva a porta escolhida, mas um subprocesso não consegue alterar o ambiente do shell que o iniciou.
+
+Depois de conectar, aplique a configuração descoberta ao Bash atual:
+
+```bash
+eval "$(android-connect env --shell bash)"
+adb devices -l
+```
+
+`env` lê a porta salva e gera os `export`. Os comandos iniciados depois, incluindo Expo, herdam essas variáveis. Ferramentas já abertas mantêm seu ambiente.
+
+Para que `android-connect` também faça essa aplicação após conectar, habilite a integração na sessão:
+
+```bash
+eval "$(android-connect shell-init)"
+android-connect
+adb devices -l
+```
+
+`shell-init` gera uma função Bash que chama a CLI e aplica o ambiente depois de um `connect` ou `fix` bem-sucedido. Isso inclui `android-connect` sem argumentos. Para informar opções de conexão, use a forma explícita, por exemplo `android-connect connect --distro Ubuntu`.
+
+A função vale apenas para o terminal atual. Em outro terminal, habilite-a novamente. O instalador e a integração não editam `.bashrc` ou `.profile`.
+
+No PowerShell, a aplicação explícita à sessão usa outra sintaxe:
+
+```powershell
+Invoke-Expression (android-connect env --shell powershell | Out-String)
+```
+
+Isso configura os processos Windows iniciados nessa sessão. O acesso de um `adb.exe` ao servidor Linux depende da conectividade Windows/WSL na porta escolhida; a configuração de variáveis, sozinha, não comprova esse acesso. Para executar a ferramenta dentro do WSL com o ambiente definido, use `exec` abaixo. `env --json` fornece as variáveis como dados para automações.
 
 ## Usar com Expo e React Native
 
@@ -161,6 +196,8 @@ Os testes dos instaladores simulam os downloads e verificam se uma instalação 
 
 Os testes de `status` exercitam o executor com processos Windows reais, incluindo argumentos vazios, aspas e timeout. A descoberta e a consulta usam fixtures de objetos usbipd, listagens WSL localizadas e respostas ADB. Um teste executa o comando completo em JSON com uma distribuição inexistente para verificar o contrato de erro.
 
+Os testes de integração Bash conferem que o ambiente aplicado chega aos processos filhos, que uma conexão malsucedida preserva a sessão anterior e que os argumentos continuam separados. Os testes de `env` verificam os formatos Bash, PowerShell e JSON, incluindo a ausência de caracteres CR na saída usada por `eval`.
+
 ```powershell
 Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser
 Import-Module Pester -RequiredVersion 5.7.1 -Force
@@ -168,8 +205,9 @@ Invoke-Pester ./tests -CI
 ```
 
 ```bash
-bash -n bin/android-connect install.sh tests/launcher.sh tests/installer.sh
+bash -n bin/android-connect src/android-connect.bash install.sh tests/launcher.sh tests/installer.sh tests/shell-integration.sh
 ./tests/launcher.sh
+./tests/shell-integration.sh
 sha256sum --check SHA256SUMS
 ./tests/installer.sh
 ```
@@ -179,7 +217,7 @@ O GitHub Actions executa os testes Pester em `windows-latest` e os testes do lan
 Ao alterar arquivos de runtime, atualize o manifesto antes de publicar uma nova tag:
 
 ```bash
-sha256sum src/AndroidConnect.ps1 src/AndroidConnect.Core.psm1 bin/android-connect bin/android-connect.ps1 > SHA256SUMS
+sha256sum src/AndroidConnect.ps1 src/AndroidConnect.Core.psm1 src/android-connect.bash bin/android-connect bin/android-connect.ps1 LICENSE > SHA256SUMS
 ```
 
 ## Documentação

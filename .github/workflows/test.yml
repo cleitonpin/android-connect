@@ -31,9 +31,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validar sintaxe
-        run: bash -n bin/android-connect install.sh tests/launcher.sh tests/installer.sh
+        run: bash -n bin/android-connect src/android-connect.bash install.sh tests/launcher.sh tests/installer.sh tests/shell-integration.sh
       - name: Testar argumentos e encaminhamento
         run: ./tests/launcher.sh
+      - name: Testar integracao de ambiente da sessao
+        run: ./tests/shell-integration.sh
       - name: Verificar hashes dos arquivos publicados
         run: sha256sum --check SHA256SUMS
       - name: Testar instalacao sem clone e integridade
