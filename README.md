@@ -145,7 +145,8 @@ Os logs incluem timestamp UTC, severidade, operação, resultado, duração e me
 Os testes de unidade usam Pester 5 e cobrem seleção de dispositivo, estados USB, política ADB/portas, presença de emulador, erros de autorização, retries limitados e cancelamento. Os testes de instalação simulam downloads, verificam repetição, rejeição de hashes inválidos e preservação da instalação anterior. O CI Windows também executa `help` pelo comando instalado em um caminho com espaços. Os testes dos lançadores verificam opções e argumentos com espaços/metacaracteres usando executáveis falsos; não acessam USB.
 
 ```powershell
-Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser
+Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser
+Import-Module Pester -RequiredVersion 5.7.1 -Force
 Invoke-Pester ./tests -CI
 ```
 

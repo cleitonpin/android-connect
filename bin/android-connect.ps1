@@ -8,8 +8,11 @@ $flags = @{
 }
 $execSeen = $false
 $passthrough = $false
+$hasSeparator = $args -contains '--'
 foreach ($arg in $args) {
   if ($passthrough) { $forward.Add([string]$arg); continue }
+  # PowerShell consumes a bare -- when invoking a script directly with &.
+  if ($execSeen -and -not $hasSeparator) { $forward.Add('--'); $forward.Add([string]$arg); $passthrough = $true; continue }
   if ($execSeen -and $arg -eq '--') { $forward.Add('--'); $passthrough = $true; continue }
   if ($flags.ContainsKey([string]$arg)) { $forward.Add($flags[[string]$arg]) }
   else { $forward.Add([string]$arg); if ($arg -eq 'exec') { $execSeen = $true } }

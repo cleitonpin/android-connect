@@ -10,11 +10,12 @@ BeforeAll {
 
 Describe 'Standalone PowerShell installer' {
   BeforeEach {
-    Mock Invoke-WebRequest {
+    $downloadRoot = $script:FixtureRoot
+    Mock Invoke-WebRequest -MockWith ({
       param($Uri, $OutFile)
       $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.0/', ''
-      Copy-Item -LiteralPath (Join-Path $script:FixtureRoot $relative) -Destination $OutFile
-    }
+      Copy-Item -LiteralPath (Join-Path $downloadRoot $relative) -Destination $OutFile
+    }.GetNewClosure())
   }
 
   It 'installs from an expression without a checkout and supports spaces' {
@@ -47,12 +48,13 @@ Describe 'Standalone PowerShell installer' {
     $dest = Join-Path $TestDrive 'existing'
     New-Item -ItemType Directory -Path (Join-Path $dest 'current') -Force | Out-Null
     Set-Content (Join-Path $dest 'current/marker') 'preserve'
-    Mock Invoke-WebRequest {
+    $downloadRoot = $script:FixtureRoot
+    Mock Invoke-WebRequest -MockWith ({
       param($Uri, $OutFile)
       $relative = ([string]$Uri) -replace '^https://raw.githubusercontent.com/cleitonpin/android-connect/v0\.1\.0/', ''
-      Copy-Item -LiteralPath (Join-Path $script:FixtureRoot $relative) -Destination $OutFile
+      Copy-Item -LiteralPath (Join-Path $downloadRoot $relative) -Destination $OutFile
       if ($relative -eq 'src/AndroidConnect.ps1') { Add-Content $OutFile 'corrupted' }
-    }
+    }.GetNewClosure())
     { & $script:Installer -InstallDirectory $dest -NoPath } | Should -Throw '*SHA256*'
     Get-Content (Join-Path $dest 'current/marker') | Should -Be 'preserve'
   }
@@ -79,14 +81,14 @@ Describe 'Windows command argument forwarding' {
   }
   It 'translates CLI flags before the child command boundary' {
     & (Join-Path $script:ProjectRoot 'bin/android-connect.ps1') doctor --json --output 'report with spaces.json'
-    $actual = @(Get-Content -Raw $script:Capture | ConvertFrom-Json)
+    $actual = Get-Content -Raw $script:Capture | ConvertFrom-Json
     $actual | Should -Contain '-Json'
     $actual | Should -Contain '-OutputPath'
     $actual | Should -Contain 'report with spaces.json'
   }
   It 'preserves Expo flags and shell metacharacters as child arguments' {
     & (Join-Path $script:ProjectRoot 'bin/android-connect.ps1') exec -- npx expo run:android --device 'serial with spaces' '--flag=a;b'
-    $actual = @(Get-Content -Raw $script:Capture | ConvertFrom-Json)
+    $actual = Get-Content -Raw $script:Capture | ConvertFrom-Json
     $actual | Should -Contain '--device'
     $actual | Should -Contain 'serial with spaces'
     $actual | Should -Contain '--flag=a;b'

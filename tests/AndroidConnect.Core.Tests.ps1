@@ -1,4 +1,4 @@
-# Run with: Invoke-Pester ./tests (Pester 3.4+; CI uses Pester 5)
+# Run with: Invoke-Pester ./tests (Pester 5.7.1)
 Import-Module "$PSScriptRoot/../src/AndroidConnect.Core.psm1" -Force
 Describe 'USB state machine' {
   It 'reports disconnected or unknown USB without acting' { Get-ConnectActions 'Unknown' $false $false | Should -Be @('DISCOVER_DEVICE') }
