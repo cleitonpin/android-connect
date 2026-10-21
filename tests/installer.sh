@@ -46,5 +46,5 @@ if bash < "$root/install.sh" > "$tmp/failure.log" 2>&1; then
   exit 1
 fi
 [[ "$(readlink -f "$XDG_BIN_HOME/android-connect")" == "$target" ]]
-cmp "$tmp/before" "$tmp/after"
+(cd "${target%/bin/android-connect}"; sha256sum --check SHA256SUMS)
 printf 'installer: remote layout, spaces, repeated install and checksum rejection: ok\n'
