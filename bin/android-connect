@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+ROOT="$(cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)"
+PS_EXE="${ANDROID_CONNECT_POWERSHELL:-powershell.exe}"
+if ! command -v "$PS_EXE" >/dev/null 2>&1; then
+  printf 'android-connect: %s não está disponível. Execute no WSL com interop Windows habilitado.\n' "$PS_EXE" >&2
+  exit 127
+fi
+if ! command -v wslpath >/dev/null 2>&1; then
+  printf 'android-connect: wslpath não encontrado; execute pelo WSL.\n' >&2
+  exit 127
+fi
+PS_SCRIPT="$(wslpath -w "$ROOT/src/AndroidConnect.ps1")"
+args=()
+exec_seen=0
+passthrough=0
+for arg in "$@"; do
+  if (( passthrough )); then args+=( "$arg" ); continue; fi
+  if (( exec_seen )) && [[ "$arg" == "--" ]]; then args+=( "$arg" ); passthrough=1; continue; fi
+  case "$arg" in
+    --device) args+=( -Device );; --serial) args+=( -Serial );; --distro) args+=( -Distro );; --port) args+=( -Port );;
+    --dry-run) args+=( -DryRun );; --verbose) args+=( -VerboseOutput );; --json) args+=( -Json );; --yes) args+=( -Yes );;
+    --output) args+=( -OutputPath );; --format) args+=( -Format );;
+    *) args+=( "$arg" ); [[ "$arg" == "exec" ]] && exec_seen=1 || true;;
+  esac
+done
+exec "$PS_EXE" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PS_SCRIPT" "${args[@]}"

@@ -1,0 +1,10 @@
+# Relatórios locais de diagnóstico podem conter identificadores do dispositivo.
+*.doctor.json
+*.doctor.txt
+report*.json
+report*.txt
+
+# Arquivos temporários e metadados do editor.
+.DS_Store
+Thumbs.db
+.vscode/

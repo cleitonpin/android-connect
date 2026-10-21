@@ -1,0 +1,32 @@
+name: Testes
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell:
+    name: PowerShell 5.1 / Pester
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar Pester 5
+        shell: powershell
+        run: Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+      - name: Executar testes unitários
+        shell: powershell
+        run: Invoke-Pester ./tests -CI
+
+  launcher:
+    name: Bash launcher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar sintaxe
+        run: bash -n bin/android-connect install.sh tests/launcher.sh
+      - name: Testar argumentos e encaminhamento
+        run: ./tests/launcher.sh
