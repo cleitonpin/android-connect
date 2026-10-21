@@ -7,6 +7,7 @@ Conecte um celular Android por USB ao ADB dentro do WSL2 e verifique se ele resp
 [![Testes](https://github.com/cleitonpin/android-connect/actions/workflows/test.yml/badge.svg)](https://github.com/cleitonpin/android-connect/actions/workflows/test.yml)
 ![Windows](https://img.shields.io/badge/host-Windows%20%2B%20WSL2-0078D4)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%2F%207-5391FE)
+[![Licença MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-green)](LICENSE)
 
 </div>
 
@@ -194,3 +195,7 @@ sha256sum src/AndroidConnect.ps1 src/AndroidConnect.Core.psm1 bin/android-connec
 - O servidor 5038 funcionou no ambiente que motivou este projeto, mas a hipótese de interferência do modo mirrored permanece sem confirmação.
 - A integração do comando `exec` com Expo depende do fluxo e da versão do Expo instalados pelo projeto.
 - PowerShell 5.1 e usbipd-win devem ser validados no host alvo; a suíte de CI cobre decisões puras e o lançador, não operações de hardware.
+
+## Licença
+
+Distribuído sob a licença [MIT](LICENSE).
