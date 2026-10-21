@@ -12,6 +12,7 @@ jobs:
   powershell:
     name: PowerShell 5.1 / Pester
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Instalar Pester 5
@@ -24,9 +25,14 @@ jobs:
   launcher:
     name: Bash launcher
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Validar sintaxe
-        run: bash -n bin/android-connect install.sh tests/launcher.sh
+        run: bash -n bin/android-connect install.sh tests/launcher.sh tests/installer.sh
       - name: Testar argumentos e encaminhamento
         run: ./tests/launcher.sh
+      - name: Verificar hashes dos arquivos publicados
+        run: sha256sum --check SHA256SUMS
+      - name: Testar instalacao sem clone e integridade
+        run: ./tests/installer.sh

@@ -44,15 +44,25 @@ A implementação separa CLI e apresentação, descoberta USB, operações WSL, 
 
 A CLI não instala pacotes, não altera `.bashrc`/`.profile`, não reinicia WSL ou serviços e não encerra processos ADB.
 
-## Instalação no WSL
+## Instalar sem Git e sem clonar o repositório
 
-Clone o repositório e instale o lançador em `~/.local/bin`:
+No **PowerShell do Windows**, execute:
+
+```powershell
+irm https://raw.githubusercontent.com/cleitonpin/android-connect/main/install.ps1 | iex
+android-connect help
+```
+
+O instalador baixa apenas os arquivos da CLI, verifica seus hashes SHA-256 e instala em `%LOCALAPPDATA%\Programs\AndroidConnect`. Ele adiciona sua pasta `bin` ao `PATH` do usuário e da sessão atual, sem exigir administrador. Não instala ADB, WSL ou usbipd-win. Os comandos continuam operando o ADB dentro do WSL.
+
+No **terminal WSL**, execute:
 
 ```bash
-git clone https://github.com/cleitonpin/android-connect.git
-cd android-connect
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/cleitonpin/android-connect/main/install.sh | bash
+android-connect help
 ```
+
+A instalação WSL salva a CLI em `~/.local/share/android-connect/versions/` e cria o comando em `~/.local/bin`. Nenhum dos instaladores precisa de Git ou de estar dentro de um projeto. Os arquivos baixados são de uma tag de versão específica; reexecute o instalador para atualizar a versão distribuída por ele. O manifesto de hashes é servido pelo mesmo repositório via HTTPS: a verificação detecta arquivos corrompidos ou inconsistentes e exige confiança neste publicador.
 
 Se `~/.local/bin` não estiver no `PATH`, adicione-o à sessão:
 
@@ -60,7 +70,25 @@ Se `~/.local/bin` não estiver no `PATH`, adicione-o à sessão:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-O instalador cria apenas um symlink. Também é possível executar `./bin/android-connect` sem instalar. Use `ANDROID_CONNECT_POWERSHELL=pwsh` para escolher PowerShell 7 se estiver disponível.
+`irm` é o alias de `Invoke-RestMethod`; `iex` é o alias de `Invoke-Expression`. A combinação executa código remoto. Se preferir revisar antes, baixe o instalador, leia o arquivo e execute-o em seguida:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/cleitonpin/android-connect/main/install.ps1 -OutFile install-android-connect.ps1
+# Abra e revise install-android-connect.ps1; depois:
+& .\install-android-connect.ps1
+```
+
+Para não alterar o PATH no Windows, execute o arquivo com `-NoPath`. Para fixar uma versão, use `-Version v0.1.0` no PowerShell ou `ANDROID_CONNECT_VERSION=v0.1.0 bash install.sh` no WSL, depois de baixar o instalador. Nenhum perfil de shell é editado. Use `ANDROID_CONNECT_POWERSHELL=pwsh.exe` no WSL ou `$env:ANDROID_CONNECT_POWERSHELL='pwsh.exe'` no Windows para escolher PowerShell 7.
+
+Para desenvolver a ferramenta, o clone continua disponível:
+
+```bash
+git clone https://github.com/cleitonpin/android-connect.git
+cd android-connect
+./bin/android-connect help
+```
+
+Para desinstalar, remova a pasta da instalação e o comando criado. No Windows, remova também a entrada `%LOCALAPPDATA%\Programs\AndroidConnect\bin` do PATH do usuário. As preferências em `%LOCALAPPDATA%\android-connect` ficam separadas da instalação.
 
 ## Uso rápido
 
@@ -114,7 +142,7 @@ Os logs incluem timestamp UTC, severidade, operação, resultado, duração e me
 
 ## Testes
 
-Os testes de unidade usam Pester 5 e cobrem seleção de dispositivo, estados USB, política ADB/portas, presença de emulador, erros de autorização, retries limitados e cancelamento. O teste Bash verifica o mapeamento das opções e preservação de argumentos com espaços/metacaracteres usando executáveis falsos; não acessa USB ou Windows.
+Os testes de unidade usam Pester 5 e cobrem seleção de dispositivo, estados USB, política ADB/portas, presença de emulador, erros de autorização, retries limitados e cancelamento. Os testes de instalação simulam downloads, verificam repetição, rejeição de hashes inválidos e preservação da instalação anterior. O CI Windows também executa `help` pelo comando instalado em um caminho com espaços. Os testes dos lançadores verificam opções e argumentos com espaços/metacaracteres usando executáveis falsos; não acessam USB.
 
 ```powershell
 Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser
@@ -122,11 +150,19 @@ Invoke-Pester ./tests -CI
 ```
 
 ```bash
-bash -n bin/android-connect install.sh tests/launcher.sh
+bash -n bin/android-connect install.sh tests/launcher.sh tests/installer.sh
 ./tests/launcher.sh
+sha256sum --check SHA256SUMS
+./tests/installer.sh
 ```
 
 O GitHub Actions executa os testes Pester em `windows-latest` e os testes do lançador em `ubuntu-latest`. Testes unitários não provam integração com um telefone real; isso exige Windows, usbipd-win e aparelho conectado.
+
+Ao alterar arquivos de runtime, atualize o manifesto antes de publicar uma nova tag:
+
+```bash
+sha256sum src/AndroidConnect.ps1 src/AndroidConnect.Core.psm1 bin/android-connect bin/android-connect.ps1 > SHA256SUMS
+```
 
 ## Documentação
 
